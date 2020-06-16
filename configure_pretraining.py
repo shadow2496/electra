@@ -65,6 +65,7 @@ class PretrainingConfig(object):
 
     # generator settings
     self.uniform_generator = False  # generator is uniform at random
+    self.heuristic_generator = False
     self.untied_generator_embeddings = False  # tie generator/discriminator
                                               # token embeddings?
     self.untied_generator = True  # tie all generator/discriminator weights?
@@ -77,6 +78,7 @@ class PretrainingConfig(object):
 
     # batch sizes
     self.max_seq_length = 128
+    self.max_synonym_len = 16
     self.train_batch_size = 128
     self.eval_batch_size = 128
 

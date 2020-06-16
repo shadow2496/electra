@@ -56,7 +56,7 @@ class PretrainingModel(object):
     embedding_size = (
         self._bert_config.hidden_size if config.embedding_size is None else
         config.embedding_size)
-    if config.uniform_generator:
+    if config.uniform_generator or config.heuristic_generator:
       mlm_output = self._get_masked_lm_output(masked_inputs, None)
     elif config.electra_objective and config.untied_generator:
       generator = self._build_transformer(
@@ -148,6 +148,17 @@ class PretrainingModel(object):
         logits_tiled = tf.zeros(
             modeling.get_shape_list(inputs.masked_lm_ids) +
             [self._bert_config.vocab_size])
+        logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
+        logits = logits_tiled
+      elif self._config.heuristic_generator:
+        logits = tf.zeros(self._bert_config.vocab_size)
+        logits_tiled = tf.zeros(
+            modeling.get_shape_list(inputs.masked_lm_ids) +
+            [self._bert_config.vocab_size])
+        masked_synonym_weights = tf.reduce_sum(
+            tf.one_hot(inputs.masked_synonym_ids, depth=self._bert_config.vocab_size, dtype=tf.float32), -1)
+        masked_synonym_weights[:, :, 0] = 0.0
+        logits_tiled += tf.get_global_step() / self._config.num_train_steps * 20 * masked_synonym_weights
         logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
         logits = logits_tiled
       else:

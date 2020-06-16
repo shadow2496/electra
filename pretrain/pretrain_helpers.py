@@ -184,6 +184,10 @@ def mask(config: configure_pretraining.PretrainingConfig,
   masked_lm_ids = tf.reshape(masked_lm_ids, [B, -1])
   masked_lm_ids *= tf.cast(masked_lm_weights, tf.int32)
 
+  masked_synonym_ids = tf.gather_nd(tf.reshape(inputs.synonym_ids, [B * L, -1]), flat_positions)
+  masked_synonym_ids = tf.reshape(masked_synonym_ids, [B, L, -1])
+  masked_synonym_ids *= tf.cast(masked_lm_weights, tf.int32)
+
   # Update the input ids
   replace_with_mask_positions = masked_lm_positions * tf.cast(
       tf.less(tf.random.uniform([B, N]), 0.85), tf.int32)
@@ -196,6 +200,7 @@ def mask(config: configure_pretraining.PretrainingConfig,
       input_ids=tf.stop_gradient(inputs_ids),
       masked_lm_positions=masked_lm_positions,
       masked_lm_ids=masked_lm_ids,
+      masked_synonym_ids=masked_synonym_ids,
       masked_lm_weights=masked_lm_weights
   )
 
