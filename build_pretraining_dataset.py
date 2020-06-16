@@ -20,6 +20,7 @@ import multiprocessing
 import os
 import random
 import time
+import json
 import tensorflow.compat.v1 as tf
 
 from model import tokenization
@@ -41,18 +42,41 @@ class ExampleBuilder(object):
     self._max_length = max_length
     self._target_length = max_length
 
+    with open('./data/synonym_vocab.json', 'r') as synonym_file:
+      self._synonym_extractor = json.loads(json.load(synonym_file))
+    self._current_synonyms = []
+    # Hyper-parameter
+    self._max_synonym_len = 16
+
+
+  # TODO: append synonym token-id together
   def add_line(self, line):
     """Adds a line of text to the current example being built."""
     line = line.strip().replace("\n", " ")
     if (not line) and self._current_length != 0:  # empty lines separate docs
       return self._create_example()
     bert_tokens = self._tokenizer.tokenize(line)
+
+    # MODIFIED
+    synonym_tokens_list = self._add_synonym_token(bert_tokens)
+    synonym_tokids_list = []
+    for synonym_tokens in synonym_tokens_list:
+      synonym_tokens = self._tokenizer.convert_tokens_to_ids(synonym_tokens)
+      synonym_tokids_list.append(synonym_tokens)
+    self._current_synonyms.append(synonym_tokids_list)
+
     bert_tokids = self._tokenizer.convert_tokens_to_ids(bert_tokens)
     self._current_sentences.append(bert_tokids)
     self._current_length += len(bert_tokids)
     if self._current_length >= self._target_length:
       return self._create_example()
     return None
+
+  def _add_synonym_token(self, tokens):
+    synonym_tokens = []
+    for token in tokens:
+      synonym_tokens.append(self._synonym_extractor[token])
+    return synonym_tokens
 
   def _create_example(self):
     """Creates a pre-training example from the current list of sentences."""
@@ -65,7 +89,11 @@ class ExampleBuilder(object):
 
     first_segment = []
     second_segment = []
-    for sentence in self._current_sentences:
+    first_synonym_segment = []
+    second_synonym_segment = []
+
+    # MODIFIED
+    for sentence, synonyms in zip(self._current_sentences, self._current_synonyms):
       # the sentence goes to the first segment if (1) the first segment is
       # empty, (2) the sentence doesn't put the first segment over length or
       # (3) 50% of the time when it does put the first segment over length
@@ -75,16 +103,22 @@ class ExampleBuilder(object):
            len(first_segment) < first_segment_target_length and
            random.random() < 0.5)):
         first_segment += sentence
+        first_synonym_segment += synonyms
       else:
         second_segment += sentence
+        second_synonym_segment += synonyms
 
     # trim to max_length while accounting for not-yet-added [CLS]/[SEP] tokens
     first_segment = first_segment[:self._max_length - 2]
     second_segment = second_segment[:max(0, self._max_length -
                                          len(first_segment) - 3)]
+    first_synonym_segment = first_synonym_segment[:self._max_length - 2]
+    second_synonym_segment = second_synonym_segment[:max(0, self._max_length -
+                                         len(first_segment) - 3)]
 
     # prepare to start building the next example
     self._current_sentences = []
+    self._current_synonyms = []
     self._current_length = 0
     # small chance for random-length instead of max_length-length example
     if random.random() < 0.05:
@@ -92,9 +126,10 @@ class ExampleBuilder(object):
     else:
       self._target_length = self._max_length
 
-    return self._make_tf_example(first_segment, second_segment)
+    return self._make_tf_example(first_segment, second_segment, first_synonym_segment, second_synonym_segment)
 
-  def _make_tf_example(self, first_segment, second_segment):
+  def _make_tf_example(self, first_segment, second_segment,
+                       first_synonym_segment = None, second_synonym_segment = None):
     """Converts two "segments" of text into a tf.train.Example."""
     vocab = self._tokenizer.vocab
     input_ids = [vocab["[CLS]"]] + first_segment + [vocab["[SEP]"]]
@@ -106,10 +141,26 @@ class ExampleBuilder(object):
     input_ids += [0] * (self._max_length - len(input_ids))
     input_mask += [0] * (self._max_length - len(input_mask))
     segment_ids += [0] * (self._max_length - len(segment_ids))
+
+    # For [CLS]
+    input_synonyms_ids = [0] * self._max_synonym_len
+    for synonym in first_synonym_segment:
+      _synonym = synonym[:self._max_synonym_len]
+      _synonym += [0] * (self._max_synonym_len - len(_synonym))
+      input_synonyms_ids += _synonym
+    # For [SEP]
+    input_synonyms_ids += [0] * self._max_synonym_len
+    for synonym in second_synonym_segment:
+      _synonym = synonym[:self._max_synonym_len]
+      _synonym += [0] * (self._max_synonym_len - len(_synonym))
+      input_synonyms_ids += _synonym
+    input_synonyms_ids += [0] * self._max_synonym_len
+
     tf_example = tf.train.Example(features=tf.train.Features(feature={
         "input_ids": create_int_feature(input_ids),
         "input_mask": create_int_feature(input_mask),
-        "segment_ids": create_int_feature(segment_ids)
+        "segment_ids": create_int_feature(segment_ids),
+        "synonym_ids": create_int_feature(input_synonyms_ids)
     }))
     return tf_example
 
@@ -134,6 +185,7 @@ class ExampleWriter(object):
         self._writers.append(tf.io.TFRecordWriter(output_fname))
     self.n_written = 0
 
+# TODO: write out synonyms together with the src sentences
   def write_examples(self, input_file):
     """Writes out examples from the provided input file."""
     with tf.io.gfile.GFile(input_file) as f:
@@ -141,6 +193,7 @@ class ExampleWriter(object):
         line = line.strip()
         if line or self._blanks_separate_docs:
           example = self._example_builder.add_line(line)
+
           if example:
             self._writers[self.n_written % len(self._writers)].write(
                 example.SerializeToString())
