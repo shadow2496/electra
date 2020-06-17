@@ -40,6 +40,7 @@ class PretrainingModel(object):
   def __init__(self, config: configure_pretraining.PretrainingConfig,
                features, is_training):
     # Set up model config
+    self.global_step = tf.Variable(0., trainable=False)
     self._config = config
     self._bert_config = training_utils.get_bert_config(config)
     if config.debug:
@@ -156,9 +157,10 @@ class PretrainingModel(object):
             modeling.get_shape_list(inputs.masked_lm_ids) +
             [self._bert_config.vocab_size])
         masked_synonym_weights = tf.reduce_sum(
-            tf.one_hot(inputs.masked_synonym_ids, depth=self._bert_config.vocab_size, dtype=tf.float32), -1)
-        masked_synonym_weights[:, :, 0] = 0.0
-        logits_tiled += tf.get_global_step() / self._config.num_train_steps * 20 * masked_synonym_weights
+            tf.one_hot(inputs.masked_synonym_ids, depth=self._bert_config.vocab_size, dtype=tf.float32), -2)
+        padded_synonym_mask = tf.concat([tf.zeros([1]), tf.ones([self._bert_config.vocab_size - 1])], 0)
+        masked_synonym_weights *= tf.expand_dims(tf.expand_dims(padded_synonym_mask, 0), 0)
+        logits_tiled += self.global_step / tf.cast(self._config.num_train_steps, tf.float32) * 20.0 * masked_synonym_weights
         logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
         logits = logits_tiled
       else:
@@ -291,6 +293,8 @@ def model_fn_builder(config: configure_pretraining.PretrainingConfig):
           warmup_steps=config.num_warmup_steps,
           lr_decay_power=config.lr_decay_power
       )
+      new_global_step = model.global_step + 1.0
+      train_op = tf.group(train_op, [model.global_step.assign(new_global_step)])
       output_spec = tf.estimator.tpu.TPUEstimatorSpec(
           mode=mode,
           loss=model.total_loss,
