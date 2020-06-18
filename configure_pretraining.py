@@ -42,13 +42,15 @@ class PretrainingConfig(object):
     self.lr_decay_power = 1.0  # linear weight decay by default
     self.weight_decay_rate = 0.01
     self.num_warmup_steps = 10000
+    self.max_synonym_weight = 0.6
+    self.synonym_scheduler_type = "linear"  # one of "linear", "log"
 
     # training settings
     self.iterations_per_loop = 200
-    self.save_checkpoints_steps = 1000
-    self.num_train_steps = 1000000
+    self.save_checkpoints_steps = 20000
+    self.num_train_steps = 200000
     self.num_eval_steps = 100
-    self.keep_checkpoint_max = 5 # maximum number of recent checkpoint files to keep;
+    self.keep_checkpoint_max = 10 # maximum number of recent checkpoint files to keep;
                                  # change to 0 or None to keep all checkpoints
 
     # model settings

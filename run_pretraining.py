@@ -144,23 +144,11 @@ class PretrainingModel(object):
     """Masked language modeling softmax layer."""
     masked_lm_weights = inputs.masked_lm_weights
     with tf.variable_scope("generator_predictions"):
-      if self._config.uniform_generator:
+      if self._config.uniform_generator or self._config.heuristic_generator:
         logits = tf.zeros(self._bert_config.vocab_size)
         logits_tiled = tf.zeros(
             modeling.get_shape_list(inputs.masked_lm_ids) +
             [self._bert_config.vocab_size])
-        logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
-        logits = logits_tiled
-      elif self._config.heuristic_generator:
-        logits = tf.zeros(self._bert_config.vocab_size)
-        logits_tiled = tf.zeros(
-            modeling.get_shape_list(inputs.masked_lm_ids) +
-            [self._bert_config.vocab_size])
-        masked_synonym_weights = tf.reduce_sum(
-            tf.one_hot(inputs.masked_synonym_ids, depth=self._bert_config.vocab_size, dtype=tf.float32), -2)
-        padded_synonym_mask = tf.concat([tf.zeros([1]), tf.ones([self._bert_config.vocab_size - 1])], 0)
-        masked_synonym_weights *= tf.expand_dims(tf.expand_dims(padded_synonym_mask, 0), 0)
-        logits_tiled += self.global_step / tf.cast(self._config.num_train_steps, tf.float32) * 20.0 * masked_synonym_weights
         logits_tiled += tf.reshape(logits, [1, 1, self._bert_config.vocab_size])
         logits = logits_tiled
       else:
@@ -186,6 +174,24 @@ class PretrainingModel(object):
           dtype=tf.float32)
 
       probs = tf.nn.softmax(logits)
+      if self._config.heuristic_generator:
+          synonym_logits = tf.zeros(self._bert_config.vocab_size)
+          synonym_logits_tiled = tf.zeros(
+              modeling.get_shape_list(inputs.masked_lm_ids) +
+              [self._bert_config.vocab_size])
+          masked_synonym_weights = tf.reduce_sum(
+              tf.one_hot(inputs.masked_synonym_ids, depth=self._bert_config.vocab_size, dtype=tf.float32), -2)
+          padded_synonym_mask = tf.concat([tf.zeros([1]), tf.ones([self._bert_config.vocab_size - 1])], 0)
+          masked_synonym_weights *= tf.expand_dims(tf.expand_dims(padded_synonym_mask, 0), 0)
+          synonym_logits_tiled += 25.0 * masked_synonym_weights
+          synonym_logits_tiled += tf.reshape(synonym_logits, [1, 1, self._bert_config.vocab_size])
+          synonym_logits = synonym_logits_tiled
+          synonym_probs = tf.nn.softmax(synonym_logits)
+
+          if self._config.synonym_scheduler_type == 'linear':
+              synonym_weight = (self.global_step / tf.cast(self._config.num_train_steps, tf.float32)) * self._config.max_synonym_weight
+              probs = probs * (1 - synonym_weight) + synonym_probs * synonym_weight
+              logits = tf.math.log(probs)  # softmax(log(probs)) = probs
       log_probs = tf.nn.log_softmax(logits)
       label_log_probs = -tf.reduce_sum(log_probs * oh_labels, axis=-1)
 
