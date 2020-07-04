@@ -57,7 +57,7 @@ class PretrainingModel(object):
     embedding_size = (
         self._bert_config.hidden_size if config.embedding_size is None else
         config.embedding_size)
-    if config.uniform_generator or config.heuristic_generator:
+    if config.uniform_generator or config.identity_generator or config.heuristic_generator:
       mlm_output = self._get_masked_lm_output(masked_inputs, None)
     elif config.electra_objective and config.untied_generator:
       generator = self._build_transformer(
@@ -144,7 +144,7 @@ class PretrainingModel(object):
     """Masked language modeling softmax layer."""
     masked_lm_weights = inputs.masked_lm_weights
     with tf.variable_scope("generator_predictions"):
-      if self._config.uniform_generator or self._config.heuristic_generator:
+      if self._config.uniform_generator or self._config.identity_generator or self._config.heuristic_generator:
         logits = tf.zeros(self._bert_config.vocab_size)
         logits_tiled = tf.zeros(
             modeling.get_shape_list(inputs.masked_lm_ids) +
@@ -174,7 +174,22 @@ class PretrainingModel(object):
           dtype=tf.float32)
 
       probs = tf.nn.softmax(logits)
-      if self._config.heuristic_generator:
+
+      if self._config.identity_generator:
+          identity_logits = tf.zeros(self._bert_config.vocab_size)
+          identity_logits_tiled = tf.zeros(
+              modeling.get_shape_list(inputs.masked_lm_ids) +
+              [self._bert_config.vocab_size])
+          masked_identity_weights = tf.one_hot(inputs.masked_lm_ids, depth=self._bert_config.vocab_size, dtype=tf.float32)
+          identity_logits_tiled += 25.0 * masked_identity_weights
+          identity_logits_tiled += tf.reshape(identity_logits, [1, 1, self._bert_config.vocab_size])
+          identity_logits = identity_logits_tiled
+          identity_probs = tf.nn.softmax(identity_logits)
+
+          identity_weight = (self.global_step / tf.cast(self._config.num_train_steps, tf.float32)) * self._config.max_identity_weight
+          probs = probs * (1 - identity_weight) + identity_probs * identity_weight
+          logits = tf.math.log(probs)  # softmax(log(probs)) = probs
+      elif self._config.heuristic_generator:
           synonym_logits = tf.zeros(self._bert_config.vocab_size)
           synonym_logits_tiled = tf.zeros(
               modeling.get_shape_list(inputs.masked_lm_ids) +
@@ -192,6 +207,7 @@ class PretrainingModel(object):
               synonym_weight = (self.global_step / tf.cast(self._config.num_train_steps, tf.float32)) * self._config.max_synonym_weight
               probs = probs * (1 - synonym_weight) + synonym_probs * synonym_weight
               logits = tf.math.log(probs)  # softmax(log(probs)) = probs
+
       log_probs = tf.nn.log_softmax(logits)
       label_log_probs = -tf.reduce_sum(log_probs * oh_labels, axis=-1)
 

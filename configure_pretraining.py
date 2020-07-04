@@ -42,6 +42,7 @@ class PretrainingConfig(object):
     self.lr_decay_power = 1.0  # linear weight decay by default
     self.weight_decay_rate = 0.01
     self.num_warmup_steps = 10000
+    self.max_identity_weight = 0.6
     self.max_synonym_weight = 0.6
     self.synonym_scheduler_type = "linear"  # one of "linear", "log"
 
@@ -67,6 +68,7 @@ class PretrainingConfig(object):
 
     # generator settings
     self.uniform_generator = False  # generator is uniform at random
+    self.identity_generator = False
     self.heuristic_generator = False
     self.untied_generator_embeddings = False  # tie generator/discriminator
                                               # token embeddings?
